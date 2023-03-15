@@ -1,0 +1,22 @@
+local has_plenary, Scan = pcall(require, 'plenary.scandir')
+if has_plenary then
+	error('autochdir requires plenary to work', 1)
+	return
+end
+
+local M = {}
+local settings = {}
+local default_settings = {
+	generic_flags = {'README.md', '.git'}
+}
+local fn = vim.fn
+
+function M.drill_tree_dirr(path)
+	path = path or fn.expand('%:p')
+
+
+function M.setup(_settings)
+	settings = vim.tbl_deep_extend('keep', default_settings, _settings)
+end
+
+return M
