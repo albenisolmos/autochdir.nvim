@@ -1,76 +1,102 @@
-local has_plenary, Scan = pcall(require, 'plenary.scandir')
-if not has_plenary then
-	error('autochdir requires plenary to work', 1)
-	return
-end
-
 local fn = vim.fn
+local api = vim.api
 local M = {}
 local settings = {}
 local default_settings = {
+	keep_dir = false,
 	generic_flags = {'README.md', '.git'},
 	flags = {}
 }
 
-function tbl_has(tbl, value)
-	for _, val in pairs(tbl) do
-		if val == value then
-			return true
-		end
+local function log(...)
+	if os.getenv("AUTOCHDIR_LOG") then
+		vim.pretty_print(...)
 	end
 end
 
-function set_dir(path)
-	vim.cmd(string.format('cd %s', path))
+local function set_dir(path)
+	log('set_dir: ', path)
+	vim.cmd.cd(path)
 end
 
-function M.drill_tree_dir(path)
-	path = path or fn.expand('%:p:h')
-	local extension = fn.expand('%:e')
-	local break_now = false
-	local dirs
-	local flags = settings.flags
-	local generic_flags = settings.generic_flags
-	local regex = vim.regex([[.*\/]])
+local function has_flags(dir, extension_flag)
+	local function _has_flags(_dir, flags)
+		if not flags then return end
 
-	while path ~= '/' do
-		dirs = Scan.scan_dir(path, {hidden = true, depth = 1})
-		print(vim.inspect(dirs))
-		for _, _dir in pairs(dirs) do
-			local dir = fn.fnamemodify(_dir, ':t')
-			print('dir _dir:', dir, _dir)
-			if flags[extension] == dir or
-				tbl_has(generic_flags, dir)
-				then
-				set_dir(path)
-				break_now = true
-				break
+		for _, flag in pairs(flags) do
+			local path_exists = fn.glob(string.format('%s/%s', _dir, flag)) ~= ''
+			log(string.format('has_flags: %s/%s -> %s', _dir, flag, path_exists))
+
+			if path_exists then
+				return true
 			end
 		end
+	end
 
-		if break_now then
-			break
+	return _has_flags(dir, settings.flags[extension_flag]) or
+		_has_flags(dir, settings.generic_flags)
+end
+
+function M.drill_tree_dir(dir)
+	dir = dir or fn.expand('%:p:h')
+	local original_dir = dir
+	local extension = fn.expand('%:e')
+
+	while dir ~= '/' do
+		log('drill_tree_dir:', dir)
+
+		-- if find flags set this directory
+		if has_flags(dir, extension) then
+			return dir, true
 		end
 
-		print(path)
-		local start, _end = regex:match_str(path)
-		path = path:sub(start, _end)
+		-- drill path
+		dir = vim.fs.dirname(dir)
 	end
+
+	return original_dir, false
+end
+
+function M.chdir(force_drill)
+	local dir = nil
+
+	if force_drill then
+		dir = vim.fs.dirname(fn.expand('%:p:h'))
+	end
+
+	set_dir(M.drill_tree_dir(dir))
 end
 
 function M.setup(_settings)
 	_settings = _settings or {}
-	settings = vim.tbl_deep_extend('keep', default_settings, _settings)
+	settings = vim.tbl_deep_extend('keep', _settings, default_settings)
+	local augroup_autochdir = api.nvim_create_augroup('Autochdir', {clear = true})
+	local chdir_count = 0
 
-	vim.api.nvim_create_user_command('AutochdirCd', function()
-		M.drill_tree_dir()
+	api.nvim_create_user_command('AutochdirCd', function(args)
+		M.chdir(args.bang)
 	end, {})
-	vim.api.nvim_create_user_command('AutochdirTest', function()
-		local regex = vim.regex([[.*\/]])
-		local path = '/path/to/dir'
-		local start, _end = regex:match_str(path)
-		print(path:sub(start, _end))
-	end, {})
+
+	api.nvim_create_autocmd({'BufEnter'}, {
+		group = augroup_autochdir,
+		callback = function()
+			-- return if current window is floating
+			if api.nvim_win_get_config(0).relative ~= '' then
+				return
+			end
+
+			if settings.keep_dir and chdir_count == 1 then
+				return
+			end
+
+			local dir, found_flag = M.drill_tree_dir()
+			if found_flag then
+				chdir_count = 1
+			end
+
+			set_dir(dir)
+		end
+	})
 end
 
 return M
