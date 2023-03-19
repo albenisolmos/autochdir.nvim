@@ -16,7 +16,7 @@ end
 
 local function set_dir(path)
 	log('set_dir: ', path)
-	vim.cmd.cd(path)
+	vim.cmd.tcd(path)
 end
 
 local function has_flags(dir, extension_flag)
@@ -58,12 +58,7 @@ function M.drill_tree_dir(dir)
 end
 
 function M.chdir(force_drill)
-	local dir = nil
-
-	if force_drill then
-		dir = vim.fs.dirname(fn.expand('%:p:h'))
-	end
-
+	local dir = force_drill and vim.fs.dirname(fn.expand('%:p:h')) or nil
 	set_dir(M.drill_tree_dir(dir))
 end
 
@@ -71,27 +66,44 @@ function M.setup(_settings)
 	_settings = _settings or {}
 	settings = vim.tbl_deep_extend('keep', _settings, default_settings)
 	local augroup_autochdir = api.nvim_create_augroup('Autochdir', {clear = true})
-	local chdir_count = 0
+	local block_keep_dir = false
 
 	api.nvim_create_user_command('AutochdirCd', function(args)
 		M.chdir(args.bang)
 	end, {})
 
+	api.nvim_create_autocmd({'TabNew'}, {
+		group = augroup_autochdir,
+		callback = function ()
+			block_keep_dir = true
+		end
+	})
 	api.nvim_create_autocmd({'BufEnter'}, {
 		group = augroup_autochdir,
 		callback = function()
-			-- return if current window is floating
-			if api.nvim_win_get_config(0).relative ~= '' then
+			if (api.nvim_win_get_config(0).relative ~= '') then
+				block_keep_dir = true
 				return
 			end
 
-			if settings.keep_dir and chdir_count == 1 then
+			if block_keep_dir then
+				block_keep_dir = false
+				return
+			end
+
+			local tab = api.nvim_get_current_tabpage()
+			local did_autochdir = pcall(api.nvim_tabpage_get_var, tab, 'did_autochdir')
+
+			-- return if current window is floating
+			if (api.nvim_win_get_config(0).relative ~= '') or
+				(settings.keep_dir and did_autochdir) then
 				return
 			end
 
 			local dir, found_flag = M.drill_tree_dir()
 			if found_flag then
-				chdir_count = 1
+				api.nvim_tabpage_set_var(tab, 'did_autochdir', true)
+				did_autochdir = true
 			end
 
 			set_dir(dir)
