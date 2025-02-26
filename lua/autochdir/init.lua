@@ -83,7 +83,7 @@ function M.setup(_settings)
 		group = augroup_autochdir,
 		callback = function()
 			-- avoid freeze oil.nvim
-			if api.bo.filetype == "oil" then
+			if vim.bo.filetype == "oil" then
 				return
 			elseif api.nvim_win_get_config(0).relative ~= "" then
 				block_keep_dir = true
